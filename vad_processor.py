@@ -36,6 +36,7 @@ class VADProcessor:
         self._model.eval()
 
         self._speech_buffer = []
+        self._confidence_history = []  # per-chunk confidence, synced with _speech_buffer
         self._speech_samples = 0
         self._is_speaking = False
         self._silence_counter = 0
@@ -44,6 +45,14 @@ class VADProcessor:
         self._silence_mode = "auto"  # "auto" or "fixed"
         self._fixed_silence_dur = 0.8
         self._silence_limit = self._seconds_to_chunks(0.8)
+
+        # Progressive silence: shorter threshold when buffer is long
+        self._progressive_tiers = [
+            # (buffer_seconds, silence_multiplier)
+            (3.0, 1.0),   # < 3s: use full silence_limit
+            (6.0, 0.5),   # 3-6s: use half silence_limit
+            (10.0, 0.25), # 6-10s: use quarter silence_limit
+        ]
 
         # Adaptive silence tracking: recent pause durations (seconds)
         self._pause_history = collections.deque(maxlen=50)
@@ -120,16 +129,29 @@ class VADProcessor:
         else:  # disabled
             return 1.0
 
+    def _get_effective_silence_limit(self) -> int:
+        """Progressive silence: accept shorter pauses as split points when buffer is long."""
+        buf_seconds = self._speech_samples / self.sample_rate
+        multiplier = 1.0
+        for tier_sec, tier_mult in self._progressive_tiers:
+            if buf_seconds < tier_sec:
+                break
+            multiplier = tier_mult
+        effective = max(1, round(self._silence_limit * multiplier))
+        return effective
+
     def process_chunk(self, audio_chunk: np.ndarray):
         confidence = self._get_confidence(audio_chunk)
         self.last_confidence = confidence
 
         effective_threshold = self.threshold if self.mode == "silero" else 0.5
+        eff_silence_limit = self._get_effective_silence_limit()
 
         log.debug(
             f"VAD conf={confidence:.3f} ({self.mode}), speaking={self._is_speaking}, "
             f"buf={self._speech_samples / self.sample_rate:.1f}s, "
-            f"silence_cnt={self._silence_counter}, limit={self._silence_limit}"
+            f"silence_cnt={self._silence_counter}, limit={eff_silence_limit} "
+            f"(base={self._silence_limit})"
         )
 
         if confidence >= effective_threshold:
@@ -144,18 +166,20 @@ class VADProcessor:
             self._is_speaking = True
             self._silence_counter = 0
             self._speech_buffer.append(audio_chunk)
+            self._confidence_history.append(confidence)
             self._speech_samples += len(audio_chunk)
         elif self._is_speaking:
             self._silence_counter += 1
             self._speech_buffer.append(audio_chunk)
+            self._confidence_history.append(confidence)
             self._speech_samples += len(audio_chunk)
 
-        # Force segment if max duration reached
+        # Force segment if max duration reached — backtrack to find best split point
         if self._speech_samples >= self.max_speech_samples:
-            return self._flush_segment()
+            return self._split_at_best_pause()
 
-        # End segment after enough silence
-        if self._is_speaking and self._silence_counter >= self._silence_limit:
+        # End segment after enough silence (progressive threshold)
+        if self._is_speaking and self._silence_counter >= eff_silence_limit:
             if self._speech_samples >= self.min_speech_samples:
                 return self._flush_segment()
             else:
@@ -163,6 +187,93 @@ class VADProcessor:
                 return None
 
         return None
+
+    def _find_best_split_index(self) -> int:
+        """Find the best chunk index to split at by looking for a confidence
+        valley in the buffer. Uses relative dip detection so it works even
+        when the speaker never fully pauses (e.g. fast commentary).
+        Returns -1 if no usable split point found."""
+        n = len(self._confidence_history)
+        if n < 4:
+            return -1
+
+        # Search in the latter 70% of the buffer (avoid splitting too early)
+        search_start = max(1, n * 3 // 10)
+
+        # Pass 1: find global minimum in search range
+        min_conf = float("inf")
+        min_idx = -1
+        for i in range(search_start, n):
+            if self._confidence_history[i] <= min_conf:
+                min_conf = self._confidence_history[i]
+                min_idx = i
+
+        if min_idx <= 0:
+            return -1
+
+        # Pass 2: check if this is a meaningful dip relative to surroundings
+        avg_conf = sum(self._confidence_history[search_start:]) / max(1, n - search_start)
+        dip_ratio = min_conf / max(avg_conf, 1e-6)
+
+        # Accept if: below threshold (clear pause), OR a relative dip >= 20%
+        effective_threshold = self.threshold if self.mode == "silero" else 0.5
+        if min_conf < effective_threshold or dip_ratio < 0.8:
+            log.debug(
+                f"Split point found at chunk {min_idx}/{n}: "
+                f"conf={min_conf:.3f}, avg={avg_conf:.3f}, dip_ratio={dip_ratio:.2f}"
+            )
+            return min_idx
+
+        # Pass 3: fallback — even a tiny dip is better than hard-cutting mid-word
+        # Accept any point that is below average confidence
+        if min_conf < avg_conf:
+            log.debug(
+                f"Split point (fallback) at chunk {min_idx}/{n}: "
+                f"conf={min_conf:.3f}, avg={avg_conf:.3f}"
+            )
+            return min_idx
+
+        return -1
+
+    def _split_at_best_pause(self):
+        """When hitting max duration, backtrack to find the best pause point.
+        Flushes the first part and keeps the remainder for continued accumulation."""
+        if not self._speech_buffer:
+            return None
+
+        split_idx = self._find_best_split_index()
+
+        if split_idx <= 0:
+            # No good split point — hard flush everything
+            log.info(
+                f"Max duration reached, no good split point, "
+                f"hard flush {self._speech_samples / self.sample_rate:.1f}s"
+            )
+            return self._flush_segment()
+
+        # Split: emit first part, keep remainder
+        first_bufs = self._speech_buffer[:split_idx]
+        remain_bufs = self._speech_buffer[split_idx:]
+        remain_confs = self._confidence_history[split_idx:]
+
+        first_samples = sum(len(b) for b in first_bufs)
+        remain_samples = sum(len(b) for b in remain_bufs)
+
+        log.info(
+            f"Max duration split at {first_samples / self.sample_rate:.1f}s, "
+            f"keeping {remain_samples / self.sample_rate:.1f}s remainder"
+        )
+
+        segment = np.concatenate(first_bufs)
+
+        # Keep remainder in buffer for next segment
+        self._speech_buffer = remain_bufs
+        self._confidence_history = remain_confs
+        self._speech_samples = remain_samples
+        self._is_speaking = True
+        self._silence_counter = 0
+
+        return segment
 
     def _flush_segment(self):
         if not self._speech_buffer:
@@ -173,6 +284,7 @@ class VADProcessor:
 
     def _reset(self):
         self._speech_buffer = []
+        self._confidence_history = []
         self._speech_samples = 0
         self._is_speaking = False
         self._silence_counter = 0

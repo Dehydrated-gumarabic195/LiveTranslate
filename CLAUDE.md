@@ -25,7 +25,7 @@ The pipeline runs in a background thread: **Audio Capture (32ms chunks) -> VAD -
 main.py (LiveTransApp)
   |-- model_manager.py     Centralized model detection, download, cache utils
   |-- audio_capture.py     WASAPI loopback via pyaudiowpatch, auto-reconnects on device change
-  |-- vad_processor.py     Silero VAD / energy-based / disabled modes, adaptive silence detection
+  |-- vad_processor.py     Silero VAD / energy-based / disabled modes, progressive silence + backtrack split
   |-- asr_engine.py        faster-whisper (Whisper) backend
   |-- asr_sensevoice.py    FunASR SenseVoice backend (better for Japanese)
   |-- asr_funasr_nano.py   FunASR Nano backend
@@ -98,6 +98,8 @@ Key overlay features:
 - Log window is created at startup but hidden; shown via tray menu "Show Log"
 - Audio chunk duration is 32ms (512 samples at 16kHz), matching Silero VAD's native window size for minimal latency
 - VAD adaptive silence mode: tracks recent pause durations, sets silence threshold to P75 × 1.2, auto-adjusts between 0.3s~2.0s
+- VAD progressive silence: buffer越长接受越短的停顿切分 (<3s=full, 3-6s=half, 6-10s=quarter of silence_limit)
+- VAD backtrack split: max duration时回溯confidence history找最低谷切分，remainder保留到下一段；三级策略（绝对低谷→相对低谷20%→低于均值兜底）
 - FunASR `disable_pbar=True` required in all `generate()` calls — tqdm crashes in GUI process when flushing stderr
 
 ## Language & Style
