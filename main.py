@@ -398,6 +398,10 @@ class LiveTransApp:
             log.info(f"Same language ({source_lang}), no translation")
             if self._overlay:
                 self._overlay.update_translation(msg_id, "", 0)
+                self._overlay.update_stats(
+                    self._asr_count, self._translate_count,
+                    self._total_prompt_tokens, self._total_completion_tokens,
+                )
         else:
             self._tl_executor.submit(
                 self._translate_async, msg_id, original_text, source_lang
