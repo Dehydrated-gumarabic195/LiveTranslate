@@ -120,6 +120,8 @@ class LiveTransApp:
         self._asr_type = None
         self._asr = None
         self._asr_device = config["asr"]["device"]
+        self._whisper_model_size = config["asr"]["model_size"]
+        self._asr_lock = threading.Lock()
         self._target_language = config["translation"]["target_language"]
         self._translator = Translator(
             api_base=config["translation"]["api_base"],
@@ -149,6 +151,11 @@ class LiveTransApp:
         self._panel = panel
         panel.settings_changed.connect(self._on_settings_changed)
         panel.model_changed.connect(self._on_model_changed)
+        panel.models_list_changed.connect(self._on_models_list_changed)
+
+    def _on_models_list_changed(self, models: list, active_idx: int):
+        if self._overlay:
+            self._overlay.set_models(models, active_idx)
 
     def _on_settings_changed(self, settings):
         self._vad.update_settings(settings)
@@ -178,6 +185,11 @@ class LiveTransApp:
                     self._asr_type = None  # ctranslate2: force reload
             else:
                 self._asr_type = None  # no engine loaded: force reload
+        new_whisper_size = settings.get("whisper_model_size")
+        if new_whisper_size and new_whisper_size != self._whisper_model_size:
+            self._whisper_model_size = new_whisper_size
+            if self._asr_type == "whisper":
+                self._asr_type = None
         if "asr_engine" in settings:
             self._switch_asr_engine(settings["asr_engine"])
         if "audio_device" in settings:
@@ -237,6 +249,8 @@ class LiveTransApp:
             hub = self._panel.get_settings().get("hub", "ms")
 
         model_size = self._config["asr"]["model_size"]
+        if self._panel:
+            model_size = self._panel.get_settings().get("whisper_model_size", model_size)
         cached = is_asr_cached(engine_type, model_size, hub)
         display_name = ASR_DISPLAY_NAMES.get(engine_type, engine_type)
         if engine_type == "whisper":
@@ -258,18 +272,9 @@ class LiveTransApp:
                         self._asr_ready = True
                     return
 
-        # Release old engine BEFORE loading new one to free GPU memory
-        if self._asr is not None:
-            log.info(f"Releasing old ASR engine: {self._asr_type}")
-            if hasattr(self._asr, "unload"):
-                self._asr.unload()
+        with self._asr_lock:
+            old_engine = self._asr
             self._asr = None
-            import gc
-            gc.collect()
-            try:
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
 
         dlg = _ModelLoadDialog(
             t("loading_model").format(name=display_name), parent=parent
@@ -279,8 +284,13 @@ class LiveTransApp:
         load_error = [None]
 
         def _load():
+            nonlocal old_engine
             try:
-                # Normalize "cuda:0 (RTX 4090)" → base="cuda", index=0
+                if old_engine is not None:
+                    log.info(f"Releasing old ASR engine: {old_engine.__class__.__name__}")
+                    if hasattr(old_engine, "unload"):
+                        old_engine.unload()
+                    old_engine = None
                 dev = device
                 dev_index = 0
                 if dev.startswith("cuda:"):
@@ -300,11 +310,14 @@ class LiveTransApp:
                     )
                 else:
                     download_root = str((MODELS_DIR / "huggingface" / "hub").resolve())
+                    compute = self._config["asr"]["compute_type"]
+                    if dev == "cpu" and compute == "float16":
+                        compute = "int8"
                     new_asr[0] = ASREngine(
                         model_size=model_size,
                         device=dev,
                         device_index=dev_index,
-                        compute_type=self._config["asr"]["compute_type"],
+                        compute_type=compute,
                         language=self._config["asr"]["language"],
                         download_root=download_root,
                     )
@@ -410,11 +423,14 @@ class LiveTransApp:
         log.info(f"Speech segment: {seg_len:.1f}s")
 
         asr_start = time.perf_counter()
-        try:
-            result = self._asr.transcribe(speech_segment)
-        except Exception as e:
-            log.error(f"ASR error: {e}", exc_info=True)
-            return
+        with self._asr_lock:
+            if not self._asr_ready or self._asr is None:
+                return
+            try:
+                result = self._asr.transcribe(speech_segment)
+            except Exception as e:
+                log.error(f"ASR error: {e}", exc_info=True)
+                return
         asr_ms = (time.perf_counter() - asr_start) * 1000
         if asr_ms > 10000:
             log.warning(f"ASR took {asr_ms:.0f}ms, possible hang")
@@ -612,7 +628,9 @@ def main():
 
             settings = panel.get_settings()
             settings["active_model"] = index
+            panel._current_settings["active_model"] = index
             _save_settings(settings)
+            panel._refresh_model_list()
             live_trans._on_model_changed(models[index])
 
     overlay.settings_requested.connect(on_toggle_panel)

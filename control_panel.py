@@ -73,6 +73,7 @@ class ControlPanel(QWidget):
 
     settings_changed = pyqtSignal(dict)
     model_changed = pyqtSignal(dict)
+    models_list_changed = pyqtSignal(list, int)
     _bench_result = pyqtSignal(str)
     _cache_result = pyqtSignal(list)
 
@@ -244,6 +245,28 @@ class ControlPanel(QWidget):
 
         layout.addWidget(asr_group)
 
+        # Whisper model download — only visible when engine is Whisper
+        self._whisper_group = QGroupBox(t("group_download_whisper"))
+        whisper_layout = QHBoxLayout(self._whisper_group)
+        self._whisper_size_combo = QComboBox()
+        self._whisper_size_combo.addItems(["tiny", "base", "small", "medium", "large-v3"])
+        saved_size = s.get("whisper_model_size", self._config["asr"].get("model_size", "medium"))
+        size_idx = self._whisper_size_combo.findText(saved_size)
+        if size_idx >= 0:
+            self._whisper_size_combo.setCurrentIndex(size_idx)
+        self._whisper_size_combo.currentIndexChanged.connect(self._on_whisper_size_changed)
+        whisper_layout.addWidget(self._whisper_size_combo)
+        self._whisper_status = QLabel("")
+        self._whisper_status.setStyleSheet("color: #888; font-size: 11px;")
+        whisper_layout.addWidget(self._whisper_status, 1)
+        self._whisper_dl_btn = QPushButton(t("btn_download_whisper"))
+        self._whisper_dl_btn.clicked.connect(self._download_whisper)
+        whisper_layout.addWidget(self._whisper_dl_btn)
+        layout.addWidget(self._whisper_group)
+        self._whisper_group.setVisible(engine_idx == 0)
+        self._asr_engine.currentIndexChanged.connect(self._on_engine_changed_whisper_vis)
+        self._update_whisper_size_label()
+
         mode_group = QGroupBox(t("group_vad_mode"))
         mode_layout = QVBoxLayout(mode_group)
         self._vad_mode = QComboBox()
@@ -339,24 +362,6 @@ class ControlPanel(QWidget):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         s = self._current_settings
-
-        active_group = QGroupBox(t("group_active_model"))
-        active_layout = QHBoxLayout(active_group)
-        self._active_model_combo = QComboBox()
-        self._refresh_model_combo()
-        active_idx = s.get("active_model", 0)
-        if 0 <= active_idx < self._active_model_combo.count():
-            self._active_model_combo.setCurrentIndex(active_idx)
-        self._active_model_combo.currentIndexChanged.connect(
-            self._on_active_model_changed
-        )
-        active_layout.addWidget(self._active_model_combo)
-
-        apply_model_btn = QPushButton(t("btn_apply"))
-        apply_model_btn.setFixedWidth(60)
-        apply_model_btn.clicked.connect(self._apply_active_model)
-        active_layout.addWidget(apply_model_btn)
-        layout.addWidget(active_group)
 
         models_group = QGroupBox(t("group_model_configs"))
         models_layout = QVBoxLayout(models_group)
@@ -805,14 +810,50 @@ class ControlPanel(QWidget):
                 log.error(f"Failed to delete {path}: {e}")
         QApplication.instance().quit()
 
-    # ── Model Management ──
+    def _on_engine_changed_whisper_vis(self, index):
+        self._whisper_group.setVisible(index == 0)
 
-    def _refresh_model_combo(self):
-        self._active_model_combo.blockSignals(True)
-        self._active_model_combo.clear()
-        for m in self._current_settings.get("models", []):
-            self._active_model_combo.addItem(f"{m['name']}  ({m['model']})")
-        self._active_model_combo.blockSignals(False)
+    def _update_whisper_size_label(self):
+        from model_manager import is_asr_cached, _MODEL_SIZE_BYTES
+        size = self._whisper_size_combo.currentText()
+        cached = is_asr_cached("whisper", size, self._current_settings.get("hub", "ms"))
+        if cached:
+            self._whisper_status.setText(t("whisper_already_cached"))
+            self._whisper_status.setStyleSheet("color: #4a4; font-size: 11px;")
+            self._whisper_dl_btn.setEnabled(False)
+        else:
+            est = _MODEL_SIZE_BYTES.get(f"whisper-{size}", 0)
+            self._whisper_status.setText(f"~{format_size(est)}")
+            self._whisper_status.setStyleSheet("color: #888; font-size: 11px;")
+            self._whisper_dl_btn.setEnabled(True)
+
+    def _on_whisper_size_changed(self):
+        self._current_settings["whisper_model_size"] = self._whisper_size_combo.currentText()
+        self._update_whisper_size_label()
+        # If already cached, switch engine immediately
+        from model_manager import is_asr_cached
+        size = self._whisper_size_combo.currentText()
+        if is_asr_cached("whisper", size, self._current_settings.get("hub", "ms")):
+            self._auto_save()
+
+    def _download_whisper(self):
+        from model_manager import is_asr_cached, get_missing_models
+        size = self._whisper_size_combo.currentText()
+        hub = self._current_settings.get("hub", "ms")
+        if is_asr_cached("whisper", size, hub):
+            return
+        missing = get_missing_models("whisper", size, hub)
+        missing = [m for m in missing if m["type"] != "silero-vad"]
+        if not missing:
+            return
+        from dialogs import ModelDownloadDialog
+        dlg = ModelDownloadDialog(missing, hub=hub, parent=self)
+        if dlg.exec() == dlg.DialogCode.Accepted:
+            self._update_whisper_size_label()
+            # Switch to Whisper engine with the downloaded size
+            self._auto_save()
+
+    # ── Model Management ──
 
     def _refresh_model_list(self):
         self._model_list.clear()
@@ -831,6 +872,11 @@ class ControlPanel(QWidget):
                 item.setFont(font)
             self._model_list.addItem(item)
 
+    def _emit_models_list_changed(self):
+        models = self._current_settings.get("models", [])
+        active_idx = self._current_settings.get("active_model", 0)
+        self.models_list_changed.emit(models, active_idx)
+
     def _add_model(self):
         dlg = ModelEditDialog(self)
         if dlg.exec():
@@ -838,8 +884,8 @@ class ControlPanel(QWidget):
             if data["name"] and data["model"]:
                 self._current_settings.setdefault("models", []).append(data)
                 self._refresh_model_list()
-                self._refresh_model_combo()
                 _save_settings(self._current_settings)
+                self._emit_models_list_changed()
 
     def _edit_model(self):
         row = self._model_list.currentRow()
@@ -852,8 +898,8 @@ class ControlPanel(QWidget):
             if data["name"] and data["model"]:
                 models[row] = data
                 self._refresh_model_list()
-                self._refresh_model_combo()
                 _save_settings(self._current_settings)
+                self._emit_models_list_changed()
 
     def _dup_model(self):
         row = self._model_list.currentRow()
@@ -864,8 +910,8 @@ class ControlPanel(QWidget):
         dup["name"] = dup["name"] + " (copy)"
         models.append(dup)
         self._refresh_model_list()
-        self._refresh_model_combo()
         _save_settings(self._current_settings)
+        self._emit_models_list_changed()
 
     def _remove_model(self):
         row = self._model_list.currentRow()
@@ -877,31 +923,16 @@ class ControlPanel(QWidget):
         if active >= len(models):
             self._current_settings["active_model"] = len(models) - 1
         self._refresh_model_list()
-        self._refresh_model_combo()
         self._model_list.setCurrentRow(min(row, len(models) - 1))
         _save_settings(self._current_settings)
-
-    def _on_active_model_changed(self, index):
-        if index >= 0:
-            self._current_settings["active_model"] = index
-            self._refresh_model_list()
+        self._emit_models_list_changed()
 
     def _on_model_double_clicked(self, item):
         row = self._model_list.row(item)
         models = self._current_settings.get("models", [])
         if 0 <= row < len(models):
-            self._active_model_combo.setCurrentIndex(row)
-            self._apply_active_model()
-
-    def _apply_active_model(self):
-        idx = self._active_model_combo.currentIndex()
-        models = self._current_settings.get("models", [])
-        if 0 <= idx < len(models):
-            self._current_settings["active_model"] = idx
-            self._refresh_model_list()
-            self.model_changed.emit(models[idx])
-            _save_settings(self._current_settings)
-            log.info(f"Active model: {models[idx]['name']} ({models[idx]['model']})")
+            self._model_list.setCurrentRow(row)
+            self._edit_model()
 
     def _run_benchmark(self):
         models = self._current_settings.get("models", [])
@@ -990,7 +1021,9 @@ class ControlPanel(QWidget):
         text = self._prompt_edit.toPlainText().strip()
         if text:
             self._current_settings["system_prompt"] = text
-            self._apply_active_model()
+            active = self.get_active_model()
+            if active:
+                self.model_changed.emit(active)
             _save_settings(self._current_settings)
             log.info("System prompt updated")
 
@@ -1005,6 +1038,7 @@ class ControlPanel(QWidget):
         self._current_settings["asr_engine"] = engine_map[
             self._asr_engine.currentIndex()
         ]
+        self._current_settings["whisper_model_size"] = self._whisper_size_combo.currentText()
         dev_text = self._asr_device.currentText()
         self._current_settings["asr_device"] = dev_text.split(" (")[0]
         audio_dev = self._audio_device.currentText()
