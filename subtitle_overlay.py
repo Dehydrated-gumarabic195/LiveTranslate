@@ -407,6 +407,7 @@ class DragHandle(QWidget):
     click_through_toggled = pyqtSignal(bool)
     topmost_toggled = pyqtSignal(bool)
     auto_scroll_toggled = pyqtSignal(bool)
+    taskbar_toggled = pyqtSignal(bool)
     target_language_changed = pyqtSignal(str)
     model_changed = pyqtSignal(int)
     start_clicked = pyqtSignal()
@@ -508,6 +509,14 @@ class DragHandle(QWidget):
         self._auto_scroll.setChecked(True)
         self._auto_scroll.toggled.connect(self.auto_scroll_toggled.emit)
         row2.addWidget(self._auto_scroll)
+
+        self._taskbar_check = QCheckBox(t("taskbar"))
+        self._taskbar_check.setFont(QFont("Consolas", 8))
+        self._taskbar_check.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._taskbar_check.setStyleSheet(_CHECK_CSS)
+        self._taskbar_check.setChecked(False)
+        self._taskbar_check.toggled.connect(self.taskbar_toggled.emit)
+        row2.addWidget(self._taskbar_check)
 
         row2.addStretch()
 
@@ -623,6 +632,7 @@ class SubtitleOverlay(QWidget):
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
         )
+        self.setWindowTitle("LiveTrans")
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
 
@@ -654,6 +664,7 @@ class SubtitleOverlay(QWidget):
         self._handle.monitor_toggled.connect(self._on_monitor_toggled)
         self._handle.click_through_toggled.connect(self._set_click_through)
         self._handle.topmost_toggled.connect(self._set_topmost)
+        self._handle.taskbar_toggled.connect(self._set_taskbar)
         self._handle.target_language_changed.connect(self.target_language_changed.emit)
         self._handle.model_changed.connect(self.model_switch_requested.emit)
         self._handle.start_clicked.connect(self.start_requested.emit)
@@ -718,6 +729,15 @@ class SubtitleOverlay(QWidget):
             flags |= Qt.WindowType.WindowStaysOnTopHint
         else:
             flags &= ~Qt.WindowType.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        self.show()
+
+    def _set_taskbar(self, enabled: bool):
+        flags = self.windowFlags()
+        if enabled:
+            flags &= ~Qt.WindowType.Tool
+        else:
+            flags |= Qt.WindowType.Tool
         self.setWindowFlags(flags)
         self.show()
 
