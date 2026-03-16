@@ -29,8 +29,9 @@ class FunASRNanoEngine:
         local = get_local_model_path(engine_type, hub=hub)
         model = local or model_name
 
-        # chdir to model dir so relative paths in config.yaml (e.g. "Qwen3-0.6B")
-        # resolve locally instead of triggering HuggingFace Hub downloads
+        if local:
+            self._ensure_qwen_weights(local)
+
         prev_cwd = os.getcwd()
         if local:
             os.chdir(local)
@@ -46,6 +47,22 @@ class FunASRNanoEngine:
             os.chdir(prev_cwd)
         self.language = None
         log.info(f"{engine_type} loaded: {model_name} on {device} (hub={hub})")
+
+    @staticmethod
+    def _ensure_qwen_weights(model_dir: str):
+        qwen_dir = os.path.join(model_dir, "Qwen3-0.6B")
+        if not os.path.isdir(qwen_dir):
+            return
+        if any(f.endswith((".safetensors", ".bin")) for f in os.listdir(qwen_dir)):
+            return
+        log.info("Downloading Qwen3-0.6B weights (one-time)...")
+        from huggingface_hub import snapshot_download
+        snapshot_download(
+            "Qwen/Qwen3-0.6B",
+            local_dir=qwen_dir,
+            ignore_patterns=["*.gguf"],
+        )
+        log.info("Qwen3-0.6B weights downloaded")
 
     def set_language(self, language: str):
         old = self.language

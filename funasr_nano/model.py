@@ -15,7 +15,7 @@ from funasr.register import tables
 from funasr.train_utils.device_funcs import force_gatherable, to_device
 from funasr.utils.datadir_writer import DatadirWriter
 from funasr.utils.load_utils import extract_fbank, load_audio_text_image_video
-from transformers import AutoConfig, AutoModelForCausalLM
+from transformers import AutoModelForCausalLM
 
 from ctc import CTC
 from tools.utils import forced_align
@@ -74,8 +74,9 @@ class FunASRNano(nn.Module):
         llm_dim = None
 
         llm_load_kwargs = llm_conf.get("load_kwargs", {})
-        config = AutoConfig.from_pretrained(init_param_path)
-        model = AutoModelForCausalLM.from_config(config, **llm_load_kwargs)
+        model = AutoModelForCausalLM.from_pretrained(
+            init_param_path, low_cpu_mem_usage=True, **llm_load_kwargs
+        )
 
         freeze = llm_conf.get("freeze", True)
         if freeze:
