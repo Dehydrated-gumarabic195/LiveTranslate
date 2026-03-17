@@ -1,9 +1,21 @@
+import locale
 import yaml
 from pathlib import Path
 
 _strings: dict = {}
 _lang = "en"
 _dir = Path(__file__).parent / "i18n"
+
+
+def _detect_system_lang() -> str:
+    """Return 'zh' if system locale is Chinese, else 'en'."""
+    try:
+        lang_code = locale.getdefaultlocale()[0] or ""
+        if lang_code.startswith("zh"):
+            return "zh"
+    except Exception:
+        pass
+    return "en"
 
 
 def set_lang(lang: str):
@@ -23,5 +35,5 @@ def t(key: str) -> str:
     return _strings.get(key, key)
 
 
-# Load English by default
-set_lang("en")
+# Detect system language on import
+set_lang(_detect_system_lang())
