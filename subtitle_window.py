@@ -13,7 +13,7 @@ from pathlib import Path
 import json
 
 from PyQt6.QtCore import (
-    Qt, QPoint, pyqtSignal, pyqtSlot, pyqtProperty,
+    Qt, pyqtSignal, pyqtSlot, pyqtProperty,
     QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QTimer,
 )
 from PyQt6.QtGui import (
@@ -25,7 +25,6 @@ from PyQt6.QtGui import (
     QPen,
     QBrush,
     QPixmap,
-    QPolygon,
 )
 from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout
 
@@ -471,8 +470,6 @@ class SubtitleWindow(QWidget):
     update_text_signal = pyqtSignal(str, str)  # original, translations_json
     position_changed = pyqtSignal()
     window_closed = pyqtSignal()
-    edit_mode_changed = pyqtSignal(bool)
-    size_changed = pyqtSignal(int)  # new width
 
     def __init__(self, settings=None):
         super().__init__()
@@ -481,11 +478,6 @@ class SubtitleWindow(QWidget):
         self._sentences = []  # [(original, {lang: text, ...}), ...]
         self._drag_pos = None
         self._bg_pixmap = None
-        self._edit_mode = False
-        self._resize_dragging = False
-        self._resize_start_pos = None
-        self._resize_start_width = 0
-
         # Auto-hide state
         self._auto_hide_timer = QTimer(self)
         self._auto_hide_timer.setSingleShot(True)
@@ -664,63 +656,18 @@ class SubtitleWindow(QWidget):
             tw._entry_animation = old_entry
             tw._animation_duration = old_dur
 
-    # --- Edit mode ---
-    def set_edit_mode(self, enabled: bool):
-        if self._edit_mode == enabled:
-            return
-        self._edit_mode = enabled
-        if enabled:
-            self.setMinimumWidth(200)
-            self.setMaximumWidth(3840)
-            self.setCursor(Qt.CursorShape.SizeAllCursor)
-        else:
-            w = self.width()
-            self.setFixedWidth(w)
-            self.setCursor(Qt.CursorShape.ArrowCursor)
-            self._settings["window_width"] = w
-            self.size_changed.emit(w)
-        self.update()
-
-    def _in_resize_zone(self, pos):
-        """Check if position is in bottom-right resize corner (16x16)."""
-        return (self._edit_mode
-                and pos.x() >= self.width() - 16
-                and pos.y() >= self.height() - 16)
-
-    # --- Mouse events (middle-click drag + edit mode left-click drag/resize) ---
+    # --- Middle-click drag ---
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.MiddleButton:
             self._drag_pos = (
                 event.globalPosition().toPoint()
                 - self.frameGeometry().topLeft()
             )
-        elif event.button() == Qt.MouseButton.LeftButton and self._edit_mode:
-            if self._in_resize_zone(event.pos()):
-                self._resize_dragging = True
-                self._resize_start_pos = event.globalPosition().toPoint()
-                self._resize_start_width = self.width()
-            else:
-                self._drag_pos = (
-                    event.globalPosition().toPoint()
-                    - self.frameGeometry().topLeft()
-                )
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if self._resize_dragging:
-            dx = event.globalPosition().toPoint().x() - self._resize_start_pos.x()
-            new_w = max(200, min(3840, self._resize_start_width + dx))
-            self.setFixedWidth(new_w)
-            self._fit_height()
-        elif self._drag_pos:
-            btns = event.buttons()
-            if btns & Qt.MouseButton.MiddleButton or (self._edit_mode and btns & Qt.MouseButton.LeftButton):
-                self.move(event.globalPosition().toPoint() - self._drag_pos)
-        elif self._edit_mode:
-            if self._in_resize_zone(event.pos()):
-                self.setCursor(Qt.CursorShape.SizeFDiagCursor)
-            else:
-                self.setCursor(Qt.CursorShape.SizeAllCursor)
+        if self._drag_pos and event.buttons() & Qt.MouseButton.MiddleButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
@@ -728,50 +675,17 @@ class SubtitleWindow(QWidget):
             if self._drag_pos:
                 self._drag_pos = None
                 self.position_changed.emit()
-        elif event.button() == Qt.MouseButton.LeftButton and self._edit_mode:
-            if self._resize_dragging:
-                self._resize_dragging = False
-                self._resize_start_pos = None
-                self.size_changed.emit(self.width())
-                self.position_changed.emit()
-            elif self._drag_pos:
-                self._drag_pos = None
-                self.position_changed.emit()
         super().mouseReleaseEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and self._edit_mode:
-            self.set_edit_mode(False)
-            self.edit_mode_changed.emit(False)
-            return
-        super().mouseDoubleClickEvent(event)
 
     def closeEvent(self, event):
         self.window_closed.emit()
         super().closeEvent(event)
 
     def paintEvent(self, event):
-        painter = QPainter(self)
         if self._bg_pixmap and not self._bg_pixmap.isNull():
+            painter = QPainter(self)
             painter.drawPixmap(self.rect(), self._bg_pixmap)
-        if self._edit_mode:
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-            # Draw edit mode border
-            pen = QPen(QColor(100, 200, 100, 180), 2)
-            pen.setStyle(Qt.PenStyle.DashLine)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRect(1, 1, self.width() - 2, self.height() - 2)
-            # Draw resize grip triangle
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QBrush(QColor(100, 200, 100, 150)))
-            grip = QPolygon([
-                QPoint(self.width(), self.height() - 12),
-                QPoint(self.width() - 12, self.height()),
-                QPoint(self.width(), self.height()),
-            ])
-            painter.drawPolygon(grip)
-        painter.end()
+            painter.end()
         super().paintEvent(event)
 
     # --- Text updates ---

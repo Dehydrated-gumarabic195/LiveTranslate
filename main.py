@@ -862,26 +862,6 @@ def main():
 
     panel.subtitle_settings_changed.connect(_on_panel_subtitle_changed)
 
-    # Edit mode: panel ↔ subtitle window
-    panel.subtitle_edit_mode_changed.connect(subwin.set_edit_mode)
-
-    def _on_subwin_edit_mode(enabled):
-        panel._subtitle_widget.set_edit_mode(enabled)
-
-    subwin.edit_mode_changed.connect(_on_subwin_edit_mode)
-
-    # Sync width from subtitle window resize back to settings
-    def _on_subwin_size_changed(new_width):
-        settings = panel.get_settings()
-        sm = settings.get("subtitle_mode") or {}
-        sm["window_width"] = new_width
-        settings["subtitle_mode"] = sm
-        panel._current_settings["subtitle_mode"] = sm
-        _save_settings(settings)
-        panel._subtitle_widget.update_settings(sm)
-
-    subwin.size_changed.connect(_on_subwin_size_changed)
-
     menu.addSeparator()
 
     # --- Show log / panel ---

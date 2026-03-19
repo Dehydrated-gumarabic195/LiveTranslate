@@ -67,19 +67,18 @@ class _ColorButton(QPushButton):
         self._update_style()
 
 
-def _make_image_row(current_path: str, on_change):
-    """Create a background image selector row. Returns (layout, line_edit)."""
-    row = QHBoxLayout()
-    row.setSpacing(6)
+def _make_image_rows(current_path: str, on_change):
+    """Create background image selector (2-row layout). Returns (layout, line_edit)."""
+    box = QVBoxLayout()
+    box.setSpacing(2)
 
     line_edit = QLineEdit()
     line_edit.setReadOnly(True)
     line_edit.setText(current_path)
-    line_edit.setMinimumWidth(120)
-    row.addWidget(line_edit, 1)
+    box.addWidget(line_edit)
 
+    btn_row = QHBoxLayout()
     select_btn = QPushButton(t("subwin_bg_image_select"))
-    select_btn.setFixedHeight(22)
 
     def _select():
         path, _ = QFileDialog.getOpenFileName(
@@ -89,7 +88,6 @@ def _make_image_row(current_path: str, on_change):
             "Images (*.png *.webp *.jpg *.jpeg *.bmp)",
         )
         if path:
-            # Store relative path if under project dir
             try:
                 rel = os.path.relpath(path, _PROJECT_DIR)
                 if not rel.startswith(".."):
@@ -100,19 +98,20 @@ def _make_image_row(current_path: str, on_change):
             on_change()
 
     select_btn.clicked.connect(_select)
-    row.addWidget(select_btn)
+    btn_row.addWidget(select_btn)
 
     clear_btn = QPushButton(t("subwin_bg_image_clear"))
-    clear_btn.setFixedHeight(22)
 
     def _clear():
         line_edit.setText("")
         on_change()
 
     clear_btn.clicked.connect(_clear)
-    row.addWidget(clear_btn)
+    btn_row.addWidget(clear_btn)
+    btn_row.addStretch()
+    box.addLayout(btn_row)
 
-    return row, line_edit
+    return box, line_edit
 
 
 class LineEditDialog(QDialog):
@@ -130,8 +129,6 @@ class LineEditDialog(QDialog):
         layout = QVBoxLayout(self)
 
         grid = QGridLayout()
-        grid.setColumnStretch(0, 1)
-        grid.setColumnMinimumWidth(1, 180)
         r = 0
 
         grid.addWidget(QLabel(t("subwin_enabled")), r, 0)
@@ -229,7 +226,7 @@ class LineEditDialog(QDialog):
         r += 1
 
         grid.addWidget(QLabel(t("subwin_bg_image")), r, 0)
-        img_row, self._bg_image_edit = _make_image_row(self._cfg.get("bg_image", ""), lambda: None)
+        img_row, self._bg_image_edit = _make_image_rows(self._cfg.get("bg_image", ""), lambda: None)
         grid.addLayout(img_row, r, 1)
         r += 1
 
@@ -285,8 +282,8 @@ class LineEditDialog(QDialog):
 
     def _update_lang_visibility(self):
         is_translation = self._type_combo.currentData() == "translation"
-        self._lang_label.setVisible(is_translation)
-        self._lang_combo.setVisible(is_translation)
+        self._lang_label.setEnabled(is_translation)
+        self._lang_combo.setEnabled(is_translation)
 
     def get_config(self) -> dict:
         cfg = {
@@ -315,7 +312,6 @@ class SubtitleSettingsWidget(QWidget):
     """Embeddable subtitle settings panel (used as a tab in ControlPanel)."""
 
     settings_changed = pyqtSignal(dict)
-    edit_mode_changed = pyqtSignal(bool)
 
     def __init__(self, current_settings=None, parent=None):
         super().__init__(parent)
@@ -345,33 +341,23 @@ class SubtitleSettingsWidget(QWidget):
         layout.setSpacing(6)
         layout.setContentsMargins(4, 4, 4, 4)
 
-        # Top row: edit mode + help
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-
-        self._edit_mode_btn = QPushButton(t("subwin_edit_mode"))
-        self._edit_mode_btn.setCheckable(True)
-        self._edit_mode_btn.toggled.connect(self._on_edit_mode_toggled)
-        top_row.addWidget(self._edit_mode_btn)
-
-        top_row.addStretch()
-
-        reset_btn = QPushButton(t("subwin_reset"))
-        reset_btn.clicked.connect(self._on_reset)
-        top_row.addWidget(reset_btn)
-
-        hint_btn = QPushButton(t("subwin_help"))
-        hint_btn.clicked.connect(lambda: QMessageBox.information(self, t("subwin_help"), t("subwin_hint")))
-        top_row.addWidget(hint_btn)
-
-        layout.addLayout(top_row)
-
         # === Window settings ===
         win_group = QGroupBox(t("subwin_basic"))
         g = QGridLayout(win_group)
         g.setColumnStretch(0, 1)
         g.setColumnMinimumWidth(1, 180)
         r = 0
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        reset_btn = QPushButton(t("subwin_reset"))
+        reset_btn.clicked.connect(self._on_reset)
+        btn_row.addWidget(reset_btn)
+        hint_btn = QPushButton(t("subwin_help"))
+        hint_btn.clicked.connect(lambda: QMessageBox.information(self, t("subwin_help"), t("subwin_hint")))
+        btn_row.addWidget(hint_btn)
+        g.addLayout(btn_row, r, 0, 1, 2)
+        r += 1
 
         g.addWidget(QLabel(t("subwin_window_width")), r, 0)
         self._width_spin = QSpinBox()
@@ -414,7 +400,7 @@ class SubtitleSettingsWidget(QWidget):
         ]
 
         g.addWidget(QLabel(t("subwin_bg_image")), r, 0)
-        img_row, self._win_bg_image_edit = _make_image_row(
+        img_row, self._win_bg_image_edit = _make_image_rows(
             self._settings.get("bg_image", ""), self._on_win_bg_image_change
         )
         g.addLayout(img_row, r, 1)
@@ -490,14 +476,6 @@ class SubtitleSettingsWidget(QWidget):
             self.update_settings(self._settings)
             self._schedule_emit()
 
-    def _on_edit_mode_toggled(self, checked):
-        self.edit_mode_changed.emit(checked)
-
-    def set_edit_mode(self, enabled: bool):
-        self._edit_mode_btn.blockSignals(True)
-        self._edit_mode_btn.setChecked(enabled)
-        self._edit_mode_btn.blockSignals(False)
-
     def _on_win_bg_image_change(self):
         self._update_win_bg_controls_state()
         self._on_change()
@@ -515,12 +493,25 @@ class SubtitleSettingsWidget(QWidget):
             enabled = cfg.get("enabled", True)
             label = t("subwin_original") if line_type == "original" else t("subwin_translation")
             if line_type == "translation":
-                lang = cfg.get("lang", "zh")
-                label += f" ({lang})"
+                label += f" ({cfg.get('lang', 'zh')})"
             font = cfg.get("font_family", "Microsoft YaHei")
             size = cfg.get("font_size", 24)
-            status = "✓" if enabled else "✗"
-            text = f"{status}  {label}  |  {font} {size}pt"
+            color = cfg.get("color", "#FFF")
+            align = cfg.get("align", "center")
+            outline = t("subwin_outline") if cfg.get("outline_enabled", True) else ""
+            entry = cfg.get("entry_animation", "none")
+            parts = [
+                "✓" if enabled else "✗",
+                label,
+                f"{font} {size}pt",
+                color,
+                align,
+            ]
+            if outline:
+                parts.append(outline)
+            if entry != "none":
+                parts.append(entry)
+            text = "  |  ".join(parts)
             item = QListWidgetItem(text)
             item.setData(Qt.ItemDataRole.UserRole, cfg)
             self._lines_list.addItem(item)

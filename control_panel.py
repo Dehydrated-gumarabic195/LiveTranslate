@@ -108,7 +108,6 @@ class ControlPanel(QWidget):
     model_changed = pyqtSignal(dict)
     models_list_changed = pyqtSignal(list, int)
     subtitle_settings_changed = pyqtSignal(dict)
-    subtitle_edit_mode_changed = pyqtSignal(bool)
     _bench_result = pyqtSignal(str)
     _cache_result = pyqtSignal(list)
 
@@ -388,6 +387,8 @@ class ControlPanel(QWidget):
 
         timing_group = QGroupBox(t("group_timing"))
         timing_layout = QGridLayout(timing_group)
+        timing_layout.setColumnStretch(0, 1)
+        timing_layout.setColumnMinimumWidth(1, 180)
         self._min_speech = QDoubleSpinBox()
         self._min_speech.setRange(0.1, 5.0)
         self._min_speech.setSingleStep(0.1)
@@ -825,7 +826,6 @@ class ControlPanel(QWidget):
         subtitle_settings = self._current_settings.get("subtitle_mode") or {}
         self._subtitle_widget = SubtitleSettingsWidget(subtitle_settings)
         self._subtitle_widget.settings_changed.connect(self._on_subtitle_settings_changed)
-        self._subtitle_widget.edit_mode_changed.connect(self.subtitle_edit_mode_changed.emit)
         return self._subtitle_widget
 
     def _on_subtitle_settings_changed(self, s):
