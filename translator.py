@@ -100,10 +100,14 @@ class Translator:
         system_prompt=None,
         proxy="none",
         no_system_role=False,
+        no_think=False,
         timeout=10,
     ):
         self._client = make_openai_client(api_base, api_key, proxy, timeout=timeout)
         self._no_system_role = no_system_role
+        self._no_think = no_think
+        if no_think:
+            log.info(f"Translator: no_think enabled for {model}")
         self._model = model
         self._target_language = target_language
         self._max_tokens = max_tokens
@@ -124,6 +128,7 @@ class Translator:
         t = Translator.__new__(Translator)
         t._client = self._client
         t._no_system_role = self._no_system_role
+        t._no_think = self._no_think
         t._model = self._model
         t._target_language = target_language
         t._max_tokens = self._max_tokens
@@ -163,12 +168,15 @@ class Translator:
             return self._translate_sync(system_prompt, text)
 
     def _translate_sync(self, system_prompt, text):
-        resp = self._client.chat.completions.create(
+        kwargs = dict(
             model=self._model,
             messages=self._build_messages(system_prompt, text),
             max_tokens=self._max_tokens,
             temperature=self._temperature,
         )
+        if self._no_think:
+            kwargs["extra_body"] = {"enable_thinking": False}
+        resp = self._client.chat.completions.create(**kwargs)
         self._last_prompt_tokens = 0
         self._last_completion_tokens = 0
         if resp.usage:
@@ -186,6 +194,8 @@ class Translator:
             temperature=self._temperature,
             stream=True,
         )
+        if self._no_think:
+            base_kwargs["extra_body"] = {"enable_thinking": False}
         try:
             stream = self._client.chat.completions.create(
                 **base_kwargs,

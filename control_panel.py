@@ -1100,6 +1100,10 @@ class ControlPanel(QWidget):
                 self._refresh_model_list()
                 _save_settings(self._current_settings)
                 self._emit_models_list_changed()
+                # Re-apply if editing the active model
+                active = self._current_settings.get("active_model", 0)
+                if row == active:
+                    self.model_changed.emit(data)
 
     def _dup_model(self):
         row = self._model_list.currentRow()

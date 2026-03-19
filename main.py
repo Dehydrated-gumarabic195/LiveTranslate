@@ -183,6 +183,8 @@ class LiveTransApp:
         self._translate_count = 0
         self._total_prompt_tokens = 0
         self._total_completion_tokens = 0
+        self._input_price = 0.0
+        self._output_price = 0.0
         self._msg_id = 0
         self._last_original = ""
         self._last_msg_id = 0
@@ -307,8 +309,11 @@ class LiveTransApp:
             system_prompt=prompt,
             proxy=model_config.get("proxy", "none"),
             no_system_role=model_config.get("no_system_role", False),
+            no_think=model_config.get("no_think", False),
             timeout=timeout,
         )
+        self._input_price = model_config.get("input_price", 0)
+        self._output_price = model_config.get("output_price", 0)
 
     def _switch_asr_engine(self, engine_type: str):
         if engine_type == self._asr_type:
@@ -454,6 +459,12 @@ class LiveTransApp:
             self._overlay.update_asr_device(f"{display_name} [{device}]")
         log.info(f"ASR engine ready: {engine_type} on {device}")
 
+    def _compute_cost(self):
+        if self._input_price > 0 or self._output_price > 0:
+            return (self._total_prompt_tokens * self._input_price +
+                    self._total_completion_tokens * self._output_price) / 1_000_000
+        return 0.0
+
     def _translate_async(self, msg_id, text, source_lang, extra_langs=None):
         """Translate text and update UI. If extra_langs is provided, also translate for subtitle window."""
         try:
@@ -464,6 +475,7 @@ class LiveTransApp:
             pt, ct = self._translator.last_usage
             self._total_prompt_tokens += pt
             self._total_completion_tokens += ct
+            cost = self._compute_cost()
             log.info(f"Translate ({tl_ms:.0f}ms): {translated}")
             if self._overlay:
                 self._overlay.update_translation(msg_id, translated, tl_ms)
@@ -472,6 +484,7 @@ class LiveTransApp:
                     self._translate_count,
                     self._total_prompt_tokens,
                     self._total_completion_tokens,
+                    cost,
                 )
             if self._subwin and self._subwin.isVisible() and translated:
                 tl_dict = {self._target_language: translated}
@@ -641,6 +654,7 @@ class LiveTransApp:
                     self._translate_count,
                     self._total_prompt_tokens,
                     self._total_completion_tokens,
+                    self._compute_cost(),
                 )
             if self._subwin and self._subwin.isVisible():
                 # Primary is same language; still need to translate extra langs
@@ -855,7 +869,7 @@ class LiveTransApp:
             log.info(f"Same language ({source_lang}), no translation")
             if self._overlay:
                 self._overlay.update_translation(msg_id, "", 0)
-                self._overlay.update_stats(self._asr_count, self._translate_count, self._total_prompt_tokens, self._total_completion_tokens)
+                self._overlay.update_stats(self._asr_count, self._translate_count, self._total_prompt_tokens, self._total_completion_tokens, self._compute_cost())
             if self._subwin and self._subwin.isVisible():
                 if extra_langs:
                     try:

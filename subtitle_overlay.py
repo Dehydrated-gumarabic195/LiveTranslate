@@ -423,6 +423,7 @@ class MonitorBar(QWidget):
         self._tl_count = 0
         self._prompt_tokens = 0
         self._completion_tokens = 0
+        self._cost = 0.0
 
         self._sys_timer = QTimer(self)
         self._sys_timer.timeout.connect(self._update_system)
@@ -445,12 +446,13 @@ class MonitorBar(QWidget):
         self._refresh_stats()
 
     def update_pipeline_stats(
-        self, asr_count, tl_count, prompt_tokens, completion_tokens
+        self, asr_count, tl_count, prompt_tokens, completion_tokens, cost=0.0
     ):
         self._asr_count = asr_count
         self._tl_count = tl_count
         self._prompt_tokens = prompt_tokens
         self._completion_tokens = completion_tokens
+        self._cost = cost
         self._refresh_stats()
 
     def _update_system(self):
@@ -481,6 +483,11 @@ class MonitorBar(QWidget):
                 f'<span style="color:{dev_color};">{self._asr_device}</span> '
                 f'<span style="color:#555;">|</span> '
             )
+        cost_str = ""
+        if self._cost > 0:
+            from i18n import get_lang
+            symbol = "¥" if get_lang() == "zh" else "$"
+            cost_str = f' <span style="color:#fa5;">{symbol}{self._cost:.4f}</span>'
         self._stats_label.setText(
             f"{dev_str}"
             f'<span style="color:#6cf;">CPU</span> {self._cpu}% '
@@ -491,6 +498,7 @@ class MonitorBar(QWidget):
             f'<span style="color:#db8;">TL</span> {self._tl_count} '
             f'<span style="color:#c9c;">Tok</span> {tokens_str} '
             f'<span style="color:#666;">({self._prompt_tokens}\u2191{self._completion_tokens}\u2193)</span>'
+            f'{cost_str}'
         )
 
 
@@ -795,7 +803,7 @@ class SubtitleOverlay(QWidget):
     clear_signal = pyqtSignal()
     # Monitor signals (thread-safe)
     update_monitor_signal = pyqtSignal(float, float, object)
-    update_stats_signal = pyqtSignal(int, int, int, int)
+    update_stats_signal = pyqtSignal(int, int, int, int, float)
     update_asr_device_signal = pyqtSignal(str)
 
     settings_requested = pyqtSignal()
@@ -991,10 +999,10 @@ class SubtitleOverlay(QWidget):
     def _on_update_monitor(self, rms: float, vad_conf: float, mic_rms):
         self._monitor.update_audio(rms, vad_conf, mic_rms)
 
-    @pyqtSlot(int, int, int, int)
-    def _on_update_stats(self, asr_count, tl_count, prompt_tokens, completion_tokens):
+    @pyqtSlot(int, int, int, int, float)
+    def _on_update_stats(self, asr_count, tl_count, prompt_tokens, completion_tokens, cost):
         self._monitor.update_pipeline_stats(
-            asr_count, tl_count, prompt_tokens, completion_tokens
+            asr_count, tl_count, prompt_tokens, completion_tokens, cost
         )
 
     @pyqtSlot(str)
@@ -1066,9 +1074,9 @@ class SubtitleOverlay(QWidget):
     def update_monitor(self, rms, vad_conf, mic_rms=None):
         self.update_monitor_signal.emit(rms, vad_conf, mic_rms)
 
-    def update_stats(self, asr_count, tl_count, prompt_tokens, completion_tokens):
+    def update_stats(self, asr_count, tl_count, prompt_tokens, completion_tokens, cost=0.0):
         self.update_stats_signal.emit(
-            asr_count, tl_count, prompt_tokens, completion_tokens
+            asr_count, tl_count, prompt_tokens, completion_tokens, cost
         )
 
     def update_asr_device(self, device: str):
