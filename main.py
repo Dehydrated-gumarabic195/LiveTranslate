@@ -565,10 +565,18 @@ class LiveTransApp:
             )
             return
 
+        source_lang = result["language"]
+        asr_lang_setting = self._panel.get_settings().get("asr_language", "auto") if self._panel else "auto"
+        if asr_lang_setting != "auto" and source_lang != asr_lang_setting:
+            log.info(
+                f"Language filter: expected '{asr_lang_setting}' but got '{source_lang}', "
+                f"discarding: {original_text[:60]}"
+            )
+            return
+
         self._asr_count += 1
         self._msg_id += 1
         msg_id = self._msg_id
-        source_lang = result["language"]
         timestamp = datetime.now().strftime("%H:%M:%S")
         log.info(f"ASR [{source_lang}] ({asr_ms:.0f}ms): {original_text}")
 

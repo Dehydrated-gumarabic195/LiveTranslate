@@ -609,13 +609,13 @@ class DragHandle(QWidget):
         self._start_stop_btn.clicked.connect(self._on_start_stop)
         row1.addWidget(self._start_stop_btn)
 
+        self._clear_btn = _btn(t("clear"))
+        self._clear_btn.clicked.connect(self.clear_clicked.emit)
+        row1.addWidget(self._clear_btn)
+
         # Mode toggle button
         self._mode_btn = _btn(t("mode_full"))
         self._mode_btn.clicked.connect(self._toggle_mode)
-        row1.addWidget(self._mode_btn)
-
-        self._clear_btn = _btn(t("clear"))
-        self._clear_btn.clicked.connect(self.clear_clicked.emit)
         row1.addWidget(self._clear_btn)
 
         settings_btn = _btn(t("settings"))
