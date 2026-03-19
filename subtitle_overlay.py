@@ -191,6 +191,7 @@ class ChatMessage(QWidget):
     """Single chat message widget with original + async translation."""
 
     _current_style = DEFAULT_STYLE
+    _compact_mode = False
 
     def __init__(
         self,
@@ -235,6 +236,11 @@ class ChatMessage(QWidget):
         self._layout.addWidget(self._trans_label)
 
     def _build_header_html(self, s):
+        if self._compact_mode:
+            return (
+                f'<span style="color:#6cf;">[{self._source_lang}]</span> '
+                f'<span style="color:{s["original_color"]};">{_escape(self._original)}</span>'
+            )
         return (
             f'<span style="color:{s["timestamp_color"]};">[{self._timestamp}]</span> '
             f'<span style="color:#6cf;">[{self._source_lang}]</span> '
@@ -247,10 +253,15 @@ class ChatMessage(QWidget):
         self._translate_ms = translate_ms
         s = self._current_style
         if translated:
-            self._trans_label.setText(
-                f'<span style="color:{s["translation_color"]};">&gt; {_escape(translated)}</span> '
-                f'<span style="color:#db8; font-size:9pt;">TL {translate_ms:.0f}ms</span>'
-            )
+            if self._compact_mode:
+                self._trans_label.setText(
+                    f'<span style="color:{s["translation_color"]};">&gt; {_escape(translated)}</span>'
+                )
+            else:
+                self._trans_label.setText(
+                    f'<span style="color:{s["translation_color"]};">&gt; {_escape(translated)}</span> '
+                    f'<span style="color:#db8; font-size:9pt;">TL {translate_ms:.0f}ms</span>'
+                )
         else:
             self._trans_label.setText(
                 f'<span style="color:#aaa; font-style:italic;">&gt; {t("same_language")}</span>'
@@ -265,10 +276,15 @@ class ChatMessage(QWidget):
             QFont(s["translation_font_family"], s["translation_font_size"])
         )
         if self._translated:
-            self._trans_label.setText(
-                f'<span style="color:{s["translation_color"]};">&gt; {_escape(self._translated)}</span> '
-                f'<span style="color:#db8; font-size:9pt;">TL {self._translate_ms:.0f}ms</span>'
-            )
+            if self._compact_mode:
+                self._trans_label.setText(
+                    f'<span style="color:{s["translation_color"]};">&gt; {_escape(self._translated)}</span>'
+                )
+            else:
+                self._trans_label.setText(
+                    f'<span style="color:{s["translation_color"]};">&gt; {_escape(self._translated)}</span> '
+                    f'<span style="color:#db8; font-size:9pt;">TL {self._translate_ms:.0f}ms</span>'
+                )
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
@@ -339,7 +355,7 @@ class MonitorBar(QWidget):
 
         # MIC bar (hidden when mic is disabled)
         self._mic_lbl = QLabel("MIC")
-        self._mic_lbl.setFixedWidth(28)
+        self._mic_lbl.setFixedWidth(26)
         self._mic_lbl.setFont(QFont("Consolas", 8))
         self._mic_lbl.setStyleSheet("color: #888; background: transparent;")
         self._mic_lbl.setVisible(False)
@@ -355,7 +371,7 @@ class MonitorBar(QWidget):
         row1.addWidget(self._mic_bar)
 
         rms_lbl = QLabel("RMS")
-        rms_lbl.setFixedWidth(28)
+        rms_lbl.setFixedWidth(26)
         rms_lbl.setFont(QFont("Consolas", 8))
         rms_lbl.setStyleSheet("color: #888; background: transparent;")
         row1.addWidget(rms_lbl)
@@ -369,7 +385,7 @@ class MonitorBar(QWidget):
         row1.addWidget(self._rms_bar)
 
         vad_lbl = QLabel("VAD")
-        vad_lbl.setFixedWidth(28)
+        vad_lbl.setFixedWidth(26)
         vad_lbl.setFont(QFont("Consolas", 8))
         vad_lbl.setStyleSheet("color: #888; background: transparent;")
         row1.addWidget(vad_lbl)
@@ -388,8 +404,11 @@ class MonitorBar(QWidget):
         self._stats_label.setFont(QFont("Consolas", 8))
         self._stats_label.setStyleSheet("color: #888; background: transparent;")
         self._stats_label.setTextFormat(Qt.TextFormat.RichText)
+        self._stats_label.setWordWrap(True)
         layout.addWidget(self._stats_label)
 
+        self._proc = psutil.Process(os.getpid())
+        self._proc.cpu_percent(interval=None)  # Prime the counter
         self._cpu = 0
         self._ram_mb = 0.0
         self._gpu_text = "N/A"
@@ -430,9 +449,8 @@ class MonitorBar(QWidget):
 
     def _update_system(self):
         try:
-            proc = psutil.Process(os.getpid())
-            self._cpu = int(proc.cpu_percent(interval=0))
-            self._ram_mb = proc.memory_info().rss / 1024 / 1024
+            self._cpu = int(self._proc.cpu_percent(interval=None) / os.cpu_count())
+            self._ram_mb = self._proc.memory_info().rss / 1024 / 1024
         except Exception:
             pass
         try:
@@ -530,26 +548,29 @@ class DragHandle(QWidget):
     start_clicked = pyqtSignal()
     stop_clicked = pyqtSignal()
     clear_clicked = pyqtSignal()
+    hide_clicked = pyqtSignal()
     quit_clicked = pyqtSignal()
+    mode_changed = pyqtSignal(str)  # "full" or "compact"
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedHeight(48)
+        self._mode = "full"
+        self.setFixedHeight(62)
         self.setStyleSheet("background: rgba(60, 60, 80, 200); border-radius: 4px;")
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        outer.setContentsMargins(8, 2, 8, 2)
+        outer.setSpacing(2)
 
         # Row 1: drag title + action buttons
         row1 = QHBoxLayout()
-        row1.setContentsMargins(0, 0, 4, 0)
+        row1.setContentsMargins(0, 0, 0, 0)
         row1.setSpacing(3)
 
         drag = _DragArea()
         drag.setStyleSheet("background: transparent;")
         drag_layout = QHBoxLayout(drag)
-        drag_layout.setContentsMargins(10, 0, 6, 0)
+        drag_layout.setContentsMargins(0, 0, 4, 0)
         drag_layout.setSpacing(6)
 
         title = QLabel("\u2630 LiveTrans")
@@ -569,15 +590,25 @@ class DragHandle(QWidget):
                 b.setToolTip(tip)
             return b
 
+        hide_btn = _btn(t("tray_hide_overlay"))
+        hide_btn.clicked.connect(self.hide_clicked.emit)
+        row1.addWidget(hide_btn)
+
         self._running = False
         self._start_stop_btn = _btn(t("paused"))
         self._start_stop_btn.setFixedWidth(56)
         self._start_stop_btn.clicked.connect(self._on_start_stop)
         row1.addWidget(self._start_stop_btn)
 
-        clear_btn = _btn(t("clear"))
-        clear_btn.clicked.connect(self.clear_clicked.emit)
-        row1.addWidget(clear_btn)
+        # Mode toggle button
+        self._mode_btn = _btn(t("mode_full"))
+        self._mode_btn.setFixedWidth(68)
+        self._mode_btn.clicked.connect(self._toggle_mode)
+        row1.addWidget(self._mode_btn)
+
+        self._clear_btn = _btn(t("clear"))
+        self._clear_btn.clicked.connect(self.clear_clicked.emit)
+        row1.addWidget(self._clear_btn)
 
         settings_btn = _btn(t("settings"))
         settings_btn.clicked.connect(self.settings_clicked.emit)
@@ -599,17 +630,24 @@ class DragHandle(QWidget):
 
         outer.addLayout(row1)
 
-        # Row 2: checkboxes + combos
-        row2 = QHBoxLayout()
-        row2.setContentsMargins(10, 0, 4, 2)
-        row2.setSpacing(6)
+        # Row 2 area: checkboxes (row 2a) + model/lang combos (row 2b)
+        self._row2_widget = QWidget()
+        self._row2_widget.setStyleSheet("background: transparent;")
+        row2_outer = QVBoxLayout(self._row2_widget)
+        row2_outer.setContentsMargins(0, 0, 0, 0)
+        row2_outer.setSpacing(2)
+
+        # Row 2a: checkboxes
+        row2a = QHBoxLayout()
+        row2a.setContentsMargins(0, 0, 0, 0)
+        row2a.setSpacing(6)
 
         self._ct_check = QCheckBox(t("click_through"))
         self._ct_check.setFont(QFont("Consolas", 8))
         self._ct_check.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         self._ct_check.setStyleSheet(_CHECK_CSS)
         self._ct_check.toggled.connect(self.click_through_toggled.emit)
-        row2.addWidget(self._ct_check)
+        row2a.addWidget(self._ct_check)
 
         self._topmost_check = QCheckBox(t("top_most"))
         self._topmost_check.setFont(QFont("Consolas", 8))
@@ -617,7 +655,7 @@ class DragHandle(QWidget):
         self._topmost_check.setStyleSheet(_CHECK_CSS)
         self._topmost_check.setChecked(True)
         self._topmost_check.toggled.connect(self.topmost_toggled.emit)
-        row2.addWidget(self._topmost_check)
+        row2a.addWidget(self._topmost_check)
 
         self._auto_scroll = QCheckBox(t("auto_scroll"))
         self._auto_scroll.setFont(QFont("Consolas", 8))
@@ -625,7 +663,7 @@ class DragHandle(QWidget):
         self._auto_scroll.setStyleSheet(_CHECK_CSS)
         self._auto_scroll.setChecked(True)
         self._auto_scroll.toggled.connect(self.auto_scroll_toggled.emit)
-        row2.addWidget(self._auto_scroll)
+        row2a.addWidget(self._auto_scroll)
 
         self._taskbar_check = QCheckBox(t("taskbar"))
         self._taskbar_check.setFont(QFont("Consolas", 8))
@@ -633,14 +671,20 @@ class DragHandle(QWidget):
         self._taskbar_check.setStyleSheet(_CHECK_CSS)
         self._taskbar_check.setChecked(False)
         self._taskbar_check.toggled.connect(self.taskbar_toggled.emit)
-        row2.addWidget(self._taskbar_check)
+        row2a.addWidget(self._taskbar_check)
 
-        row2.addStretch()
+        row2a.addStretch()
+        row2_outer.addLayout(row2a)
+
+        # Row 2b: model + target language combos
+        row2b = QHBoxLayout()
+        row2b.setContentsMargins(0, 0, 0, 0)
+        row2b.setSpacing(6)
 
         model_lbl = QLabel(t("model_label"))
         model_lbl.setFont(QFont("Consolas", 8))
         model_lbl.setStyleSheet("color: #888; background: transparent;")
-        row2.addWidget(model_lbl)
+        row2b.addWidget(model_lbl)
 
         self._model_combo = QComboBox()
         self._model_combo.setFixedHeight(18)
@@ -648,12 +692,14 @@ class DragHandle(QWidget):
         self._model_combo.setFont(QFont("Consolas", 8))
         self._model_combo.setStyleSheet(_COMBO_CSS)
         self._model_combo.currentIndexChanged.connect(self.model_changed.emit)
-        row2.addWidget(self._model_combo)
+        row2b.addWidget(self._model_combo)
+
+        row2b.addStretch()
 
         tgt_lbl = QLabel(t("target_label"))
         tgt_lbl.setFont(QFont("Consolas", 8))
         tgt_lbl.setStyleSheet("color: #888; background: transparent;")
-        row2.addWidget(tgt_lbl)
+        row2b.addWidget(tgt_lbl)
 
         self._target_lang = QComboBox()
         self._target_lang.setFixedHeight(18)
@@ -669,9 +715,11 @@ class DragHandle(QWidget):
                 self._target_lang.currentData() or "zh"
             )
         )
-        row2.addWidget(self._target_lang)
+        row2b.addWidget(self._target_lang)
 
-        outer.addLayout(row2)
+        row2_outer.addLayout(row2b)
+
+        outer.addWidget(self._row2_widget)
 
     def _on_start_stop(self):
         if self._running:
@@ -710,6 +758,24 @@ class DragHandle(QWidget):
             self._start_stop_btn.setText(t("paused"))
             self._start_stop_btn.setStyleSheet(self._PAUSED_CSS)
 
+    def _toggle_mode(self):
+        new_mode = "compact" if self._mode == "full" else "full"
+        self._apply_mode(new_mode)
+        self.mode_changed.emit(new_mode)
+
+    def _apply_mode(self, mode: str):
+        self._mode = mode
+        compact = mode == "compact"
+        self._row2_widget.setVisible(not compact)
+        self._clear_btn.setVisible(not compact)
+        self._monitor_btn.setVisible(not compact)
+        self._mode_btn.setText(t("mode_compact") if compact else t("mode_full"))
+        self.setFixedHeight(24 if compact else 62)
+
+    def set_mode(self, mode: str):
+        if mode != self._mode:
+            self._apply_mode(mode)
+
     def _toggle_monitor(self):
         self._monitor_expanded = not self._monitor_expanded
         self.monitor_toggled.emit(self._monitor_expanded)
@@ -731,7 +797,9 @@ class SubtitleOverlay(QWidget):
     model_switch_requested = pyqtSignal(int)
     start_requested = pyqtSignal()
     stop_requested = pyqtSignal()
+    hide_requested = pyqtSignal()
     quit_requested = pyqtSignal()
+    mode_changed = pyqtSignal(str)  # "full" or "compact"
 
     def __init__(self, config):
         super().__init__()
@@ -791,8 +859,10 @@ class SubtitleOverlay(QWidget):
         self._handle.model_changed.connect(self.model_switch_requested.emit)
         self._handle.start_clicked.connect(self.start_requested.emit)
         self._handle.stop_clicked.connect(self.stop_requested.emit)
+        self._handle.hide_clicked.connect(self.hide_requested.emit)
         self._handle.clear_clicked.connect(self._on_clear)
         self._handle.quit_clicked.connect(self.quit_requested.emit)
+        self._handle.mode_changed.connect(self._on_mode_changed)
         container_layout.addWidget(self._handle)
 
         # Monitor bar (collapsible)
@@ -894,6 +964,18 @@ class SubtitleOverlay(QWidget):
                 ctypes.windll.user32.SetWindowLongW(
                     hwnd, _GWL_EXSTYLE, style | _WS_EX_TRANSPARENT
                 )
+
+    def _on_mode_changed(self, mode: str):
+        compact = mode == "compact"
+        self._monitor.setVisible(not compact and self._handle._monitor_expanded)
+        ChatMessage._compact_mode = compact
+        s = ChatMessage._current_style
+        for msg in self._messages.values():
+            msg.apply_style(s)
+        self.mode_changed.emit(mode)
+
+    def set_mode(self, mode: str):
+        self._handle.set_mode(mode)
 
     def _on_monitor_toggled(self, expanded: bool):
         self._monitor.setVisible(expanded)

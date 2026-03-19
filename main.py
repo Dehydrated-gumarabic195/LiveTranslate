@@ -45,11 +45,14 @@ from PyQt6.QtGui import QAction, QActionGroup, QIcon, QPixmap, QPainter, QColor,
 from PyQt6.QtCore import QTimer, Qt
 
 from subtitle_overlay import SubtitleOverlay
+from subtitle_window import SubtitleWindow
+from subtitle_settings import SubtitleSettingsDialog
 from log_window import LogWindow
 from control_panel import (
     ControlPanel,
     SETTINGS_FILE,
     _load_saved_settings,
+    _save_settings,
 )
 from dialogs import (
     SetupWizardDialog,
@@ -172,6 +175,7 @@ class LiveTransApp:
             system_prompt=config["translation"].get("system_prompt"),
         )
         self._overlay = None
+        self._subwin = None
         self._panel = None
         self._pipeline_thread = None
         self._tl_executor = ThreadPoolExecutor(max_workers=2)
@@ -181,9 +185,14 @@ class LiveTransApp:
         self._total_prompt_tokens = 0
         self._total_completion_tokens = 0
         self._msg_id = 0
+        self._last_original = ""
+        self._last_msg_id = 0
 
     def set_overlay(self, overlay: SubtitleOverlay):
         self._overlay = overlay
+
+    def set_subtitle_window(self, subwin: SubtitleWindow):
+        self._subwin = subwin
 
     def set_panel(self, panel: ControlPanel):
         self._panel = panel
@@ -427,7 +436,8 @@ class LiveTransApp:
             self._overlay.update_asr_device(f"{display_name} [{device}]")
         log.info(f"ASR engine ready: {engine_type} on {device}")
 
-    def _translate_async(self, msg_id, text, source_lang):
+    def _translate_async(self, msg_id, text, source_lang, extra_langs=None):
+        """Translate text and update UI. If extra_langs is provided, also translate for subtitle window."""
         try:
             tl_start = time.perf_counter()
             translated = self._translator.translate(text, source_lang)
@@ -445,15 +455,48 @@ class LiveTransApp:
                     self._total_prompt_tokens,
                     self._total_completion_tokens,
                 )
+            if self._subwin and self._subwin.isVisible() and translated:
+                tl_dict = {self._target_language: translated}
+                if extra_langs:
+                    self._translate_extra_langs(text, source_lang, extra_langs, tl_dict)
+                self._subwin.update_text(text, tl_dict)
         except Exception as e:
             log.error(f"Translate error: {e}", exc_info=True)
             if self._overlay:
                 self._overlay.update_translation(msg_id, f"[error: {e}]", 0)
 
+    def _translate_extra_langs(self, text, source_lang, extra_langs, tl_dict):
+        """Translate into additional languages for subtitle window (parallel)."""
+        from concurrent.futures import as_completed
+
+        def _do_translate(lang):
+            translator = self._translator.with_target_language(lang)
+            return lang, translator.translate(text, source_lang)
+
+        futures = []
+        for lang in extra_langs:
+            futures.append(self._tl_executor.submit(_do_translate, lang))
+
+        for future in as_completed(futures):
+            try:
+                lang, result = future.result()
+                tl_dict[lang] = result
+                log.info(f"Extra translate [{lang}]: {result}")
+            except Exception as e:
+                log.error(f"Extra translate error: {e}", exc_info=True)
+
+    def _translate_subwin_only(self, text, source_lang, extra_langs):
+        """Translate only for subtitle window when primary target == source language."""
+        tl_dict = {self._target_language: text}  # same language, use original
+        self._translate_extra_langs(text, source_lang, extra_langs, tl_dict)
+        if self._subwin and self._subwin.isVisible():
+            self._subwin.update_text(text, tl_dict)
+
     def start(self):
         if self._running:
             return
-        self._tl_executor = ThreadPoolExecutor(max_workers=2)
+        n = len(self._subwin.get_target_languages()) if self._subwin else 1
+        self._tl_executor = ThreadPoolExecutor(max_workers=n + 1)
         self._running = True
         self._paused = False
         self._audio.start()
@@ -535,7 +578,19 @@ class LiveTransApp:
                 msg_id, timestamp, original_text, source_lang, asr_ms
             )
 
+        # Store for subtitle window (translation will be added later)
+        self._last_original = original_text
+        self._last_msg_id = msg_id
+
         target_lang = self._target_language
+
+        # Collect extra languages needed by subtitle window (beyond the primary target)
+        extra_langs = set()
+        if self._subwin and self._subwin.isVisible():
+            subwin_langs = self._subwin.get_target_languages()
+            # Remove primary target and source (no need to translate those)
+            extra_langs = subwin_langs - {target_lang, source_lang}
+
         if source_lang == target_lang:
             log.info(f"Same language ({source_lang}), no translation")
             if self._overlay:
@@ -546,10 +601,22 @@ class LiveTransApp:
                     self._total_prompt_tokens,
                     self._total_completion_tokens,
                 )
+            if self._subwin and self._subwin.isVisible():
+                # Primary is same language; still need to translate extra langs
+                if extra_langs:
+                    try:
+                        self._tl_executor.submit(
+                            self._translate_subwin_only, original_text, source_lang, extra_langs
+                        )
+                    except RuntimeError:
+                        pass
+                else:
+                    self._subwin.update_text(original_text, {target_lang: original_text})
         else:
             try:
                 self._tl_executor.submit(
-                    self._translate_async, msg_id, original_text, source_lang
+                    self._translate_async, msg_id, original_text, source_lang,
+                    extra_langs or None,
                 )
             except RuntimeError:
                 log.warning("Translation executor shut down, skipping")
@@ -652,8 +719,14 @@ def main():
     overlay = SubtitleOverlay(config["subtitle"])
     overlay.show()
 
+    # Subtitle window
+    subwin_cfg = (saved or {}).get("subtitle_mode")
+    subwin = SubtitleWindow(subwin_cfg)
+    subwin_was_enabled = (subwin_cfg or {}).get("enabled", False)
+
     live_trans = LiveTransApp(config)
     live_trans.set_overlay(overlay)
+    live_trans.set_subtitle_window(subwin)
     live_trans.set_panel(panel)
 
     def _deferred_init():
@@ -785,6 +858,67 @@ def main():
     overlay_menu.addAction(autoscroll_action)
     overlay_menu.addAction(taskbar_action)
     menu.addMenu(overlay_menu)
+
+    # --- Subtitle mode ---
+    subwin_menu = QMenu(t("subwin_mode"))
+
+    subwin_toggle_action = QAction(t("subwin_show"), checkable=True)
+
+    def _save_subwin_state():
+        settings = panel.get_settings()
+        sm = settings.get("subtitle_mode") or {}
+        sm["enabled"] = subwin.isVisible()
+        pos = subwin.pos()
+        sm["window_x"] = pos.x()
+        sm["window_y"] = pos.y()
+        settings["subtitle_mode"] = sm
+        panel._current_settings["subtitle_mode"] = sm
+        _save_settings(settings)
+
+    def on_toggle_subwin(checked):
+        if checked:
+            subwin.show()
+            subwin.raise_()
+            subwin_toggle_action.setText(t("subwin_hide"))
+        else:
+            subwin.hide()
+            subwin_toggle_action.setText(t("subwin_show"))
+        _save_subwin_state()
+
+    subwin_toggle_action.toggled.connect(on_toggle_subwin)
+    subwin.position_changed.connect(_save_subwin_state)
+    subwin_menu.addAction(subwin_toggle_action)
+
+    # Restore subtitle window visibility from saved state
+    if subwin_was_enabled:
+        subwin_toggle_action.setChecked(True)
+
+    subwin_settings_action = QAction(t("subwin_settings"))
+
+    _subwin_dlg = [None]
+
+    def on_subwin_settings():
+        if _subwin_dlg[0] and _subwin_dlg[0].isVisible():
+            _subwin_dlg[0].raise_()
+            return
+        current = (panel.get_settings() or {}).get("subtitle_mode") or {}
+        dlg = SubtitleSettingsDialog(current, parent=None)
+
+        def _on_changed(s):
+            subwin.apply_settings(s)
+            settings = panel.get_settings()
+            settings["subtitle_mode"] = s
+            panel._current_settings["subtitle_mode"] = s
+            _save_settings(settings)
+
+        dlg.settings_changed.connect(_on_changed)
+        dlg.show()
+        _subwin_dlg[0] = dlg
+
+    subwin_settings_action.triggered.connect(on_subwin_settings)
+    subwin_menu.addAction(subwin_settings_action)
+
+    menu.addMenu(subwin_menu)
 
     # --- Model submenu ---
     model_menu = QMenu(t("tray_menu_model"))
@@ -939,6 +1073,7 @@ def main():
     overlay.model_switch_requested.connect(on_overlay_model_switch)
     overlay.start_requested.connect(on_resume)
     overlay.stop_requested.connect(on_pause)
+    overlay.hide_requested.connect(on_toggle_overlay)
     overlay.quit_requested.connect(on_quit)
 
     tray.setContextMenu(menu)

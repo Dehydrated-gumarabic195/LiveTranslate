@@ -67,6 +67,7 @@ _VALID_KEYS = {
     "target_language",
     "ui_lang",
     "style",
+    "subtitle_mode",
 }
 
 

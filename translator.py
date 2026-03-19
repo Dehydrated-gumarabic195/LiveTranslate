@@ -94,6 +94,22 @@ class Translator:
         """(prompt_tokens, completion_tokens) from last translate call."""
         return self._last_prompt_tokens, self._last_completion_tokens
 
+    def with_target_language(self, target_language: str) -> "Translator":
+        """Create a new Translator with a different target language, sharing the same client."""
+        t = Translator.__new__(Translator)
+        t._client = self._client
+        t._no_system_role = self._no_system_role
+        t._model = self._model
+        t._target_language = target_language
+        t._max_tokens = self._max_tokens
+        t._temperature = self._temperature
+        t._streaming = self._streaming
+        t._timeout = self._timeout
+        t._system_prompt_template = self._system_prompt_template
+        t._last_prompt_tokens = 0
+        t._last_completion_tokens = 0
+        return t
+
     def _build_system_prompt(self, source_lang):
         src = LANGUAGE_DISPLAY.get(source_lang, source_lang)
         tgt = LANGUAGE_DISPLAY.get(self._target_language, self._target_language)
