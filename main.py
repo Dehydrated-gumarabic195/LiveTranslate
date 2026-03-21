@@ -493,7 +493,13 @@ class LiveTransApp:
                     self._translate_extra_langs(text, source_lang, extra_langs, tl_dict)
                 self._subwin.update_text(text, tl_dict)
         except Exception as e:
-            log.error(f"Translate error: {e}", exc_info=True)
+            import openai
+            if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError,
+                              openai.AuthenticationError, openai.APIStatusError,
+                              TimeoutError, ConnectionError)):
+                log.warning(f"Translate error: {e}")
+            else:
+                log.error(f"Translate error: {e}", exc_info=True)
             if self._overlay:
                 self._overlay.update_translation(msg_id, f"[error: {e}]", 0)
 
@@ -515,7 +521,13 @@ class LiveTransApp:
                 tl_dict[lang] = result
                 log.info(f"Extra translate [{lang}]: {result}")
             except Exception as e:
-                log.error(f"Extra translate error: {e}", exc_info=True)
+                import openai
+                if isinstance(e, (openai.APIConnectionError, openai.APITimeoutError,
+                                  openai.AuthenticationError, openai.APIStatusError,
+                                  TimeoutError, ConnectionError)):
+                    log.warning(f"Extra translate error: {e}")
+                else:
+                    log.error(f"Extra translate error: {e}", exc_info=True)
 
     def _translate_subwin_only(self, text, source_lang, extra_langs):
         """Translate only for subtitle window when primary target == source language."""
