@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-LiveTrans is a real-time audio translation system for video players on Windows. It captures system audio via WASAPI loopback, runs speech recognition, and translates via LLM APIs, displaying results in a transparent overlay.
+LiveTranslate is a real-time audio translation system for video players on Windows. It captures system audio via WASAPI loopback, runs speech recognition, and translates via LLM APIs, displaying results in a transparent overlay.
 
 **Current phase**: Phase 0 Python prototype (Phase 1 will be a C++ DirectShow Audio Tap Filter).
 
@@ -22,7 +22,7 @@ Linter: `ruff` (installed globally). Run `python -m ruff check --select F,E,W --
 The pipeline runs in a background thread: **Audio Capture (32ms chunks) -> VAD -> ASR -> Translation (async) -> Overlay**
 
 ```
-main.py (LiveTransApp)
+main.py (LiveTranslateApp)
   |-- model_manager.py     Centralized model detection, download, cache utils
   |-- audio_capture.py     WASAPI loopback via pyaudiowpatch, auto-reconnects on device change
   |-- vad_processor.py     Silero VAD / energy-based / disabled modes, progressive silence + backtrack split
@@ -31,11 +31,11 @@ main.py (LiveTransApp)
   |-- asr_funasr_nano.py   FunASR Nano backend
   |-- asr_qwen3.py         Qwen3-ASR backend (ONNX Encoder + GGUF Decoder)
   |-- qwen_asr_gguf/       Qwen3-ASR inference engine (from Qwen3-ASR-GGUF project)
-  |-- translator.py        OpenAI-compatible API client, streaming, no_think support
+  |-- translator.py        OpenAI-compatible API client, streaming, JSON schema, context history
   |-- subtitle_overlay.py  PyQt6 transparent overlay (2-row header: controls + model/lang combos)
   |-- subtitle_window.py   Standalone subtitle window for OBS capture (outlined text, animations)
   |-- subtitle_settings.py Subtitle window settings UI (grid layout, text line editor)
-  |-- control_panel.py     Settings UI (6 tabs: VAD/ASR, Translation, Style, Subtitle, Benchmark, Cache)
+  |-- control_panel.py     Settings UI (7 tabs: VAD/ASR, Translation, Style, Subtitle, Benchmark, Cache, Changelog)
   |-- dialogs.py           Setup wizard, model download/load dialogs, ModelEditDialog
   |-- benchmark.py         Translation benchmark (BENCH_SENTENCES, run_benchmark())
   |-- log_window.py        Real-time log viewer
@@ -44,7 +44,7 @@ main.py (LiveTransApp)
 ### Threading Model
 
 - **Main thread**: Qt event loop (all UI)
-- **Pipeline thread**: `_pipeline_loop` in `LiveTransApp` - reads audio, runs VAD/ASR/translation
+- **Pipeline thread**: `_pipeline_loop` in `LiveTranslateApp` - reads audio, runs VAD/ASR/translation
 - **ASR loading**: Background thread via `_switch_asr_engine` (heavy model load, ~3-8s)
 - Cross-thread UI updates use **Qt signals** (e.g., `add_message_signal`, `update_translation_signal`)
 - ASR readiness tracked by `_asr_ready` flag; pipeline drops segments while loading
@@ -56,11 +56,14 @@ main.py (LiveTransApp)
 
 ### Model Config
 
-Each model in `user_settings.json` has: `name`, `api_base`, `api_key`, `model`, `proxy` ("none"/"system"/custom URL), optional `no_system_role` (bool), optional `no_think` (bool), optional `input_price`/`output_price` (float, per 1M tokens).
+Each model in `user_settings.json` has: `name`, `api_base`, `api_key`, `model`, `proxy` ("none"/"system"/custom URL), and optional per-model flags:
 
-- `no_system_role`: Merges system prompt into user message for APIs that reject system role (e.g. Qwen-MT)
-- `no_think`: Passes `extra_body={"enable_thinking": False}` to disable reasoning for thinking models (Qwen3 etc.)
-- `input_price`/`output_price`: Token pricing for cost estimation displayed in MonitorBar
+- `no_system_role` (bool): Merges system prompt into user message for APIs that reject system role (e.g. Qwen-MT)
+- `no_think` (bool, default True): Passes `extra_body={"enable_thinking": False}` to disable reasoning for thinking models (Qwen3 etc.)
+- `streaming` (bool, default True): Per-model streaming toggle; streaming mode yields partial text via `translate_iter()` generator
+- `json_response` (bool, default False): Uses `response_format={"type": "json_schema"}` with schema `{"t": "string"}` for structured output; mutually exclusive with streaming UI display
+- `context_turns` (int, default 0): Number of recent (source, translation) pairs to include as multi-turn context in messages
+- `input_price`/`output_price` (float, per 1M tokens): Token pricing for cost estimation displayed in MonitorBar
 - Proxy handling: `proxy="none"` uses `httpx.Client(trust_env=False)` to bypass system proxy; `proxy="system"` uses default httpx behavior (env vars)
 - Editing the active model in ModelEditDialog triggers `model_changed` signal to immediately apply changes
 
@@ -101,7 +104,7 @@ Key overlay features:
 
 - **Auto-save with debounce**: All control panel settings (combos, spinboxes) auto-save after 300ms debounce via `_auto_save()` → `_do_auto_save()`. No manual Save button needed.
 - **Slider special handling**: VAD/Energy sliders update labels in real-time but only trigger save on `sliderReleased` (mouse) or immediately for keyboard input (`isSliderDown()` check).
-- **Apply Prompt button**: Kept because TextEdit shouldn't trigger on every keystroke. Also persists to disk.
+- **Prompt auto-apply**: System prompt TextEdit uses 600ms debounce via `textChanged` signal — no manual Apply button needed.
 - **Cache path**: Default `./models/` (not `~/.cache`). Applied at startup in `main.py` before `import torch` via `model_manager.apply_cache_env()`.
 - **Whisper group visibility**: Shows/hides download group when switching ASR engine; window auto-resizes via `sizeHint()`.
 - **QDoubleSpinBox precision**: All float values `round()` to 2 decimal places on save to avoid floating-point drift (e.g. `0.9999999999999992`).
@@ -160,6 +163,10 @@ Continuous speech is processed incrementally to reduce latency (enabled by `incr
 - Cancelled ASR download/failed load restores `_asr_ready` if old engine is still available
 - `Translator._build_system_prompt` catches format errors in user prompt templates, falls back to DEFAULT_PROMPT
 - Translation prompt presets: `PROMPT_PRESETS` in `translator.py` (daily/esports/anime), selectable via control panel combo
+- `translate_iter()` is a generator that yields accumulated partial text for streaming UI; `translate()` is the blocking equivalent
+- Streaming UI: `update_streaming_signal` → `ChatMessage.update_streaming()` with 50ms QTimer throttle; `set_translation()` finalizes
+- `RepetitionError` raised when model output contains repetition loops (pattern length 8+); caught in `_translate_async`, shows user-facing warning
+- Changelog: `i18n/CHANGELOG_{lang}.md` files rendered as HTML in Settings → Changelog tab via `_load_latest_changelog()`
 
 ## Language & Style
 

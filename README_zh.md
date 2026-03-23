@@ -1,4 +1,4 @@
-# LiveTrans
+# LiveTranslate
 
 [English](README.md) | **中文**
 
@@ -12,7 +12,7 @@ Windows 实时音频翻译工具。捕获系统音频（WASAPI loopback）和可
 
 ## 截图
 
-![LiveTrans](screenshot/zh.png)
+![LiveTranslate](screenshot/zh.png)
 
 ## 安装视频
 
@@ -23,6 +23,8 @@ Windows 实时音频翻译工具。捕获系统音频（WASAPI loopback）和可
 - **实时翻译管线**：系统音频 → VAD → ASR → LLM 翻译 → 字幕显示
 - **多 ASR 引擎**：faster-whisper、SenseVoice、FunASR Nano、Qwen3-ASR（GGUF）
 - **兼容任意 OpenAI 格式 API**：DeepSeek、Grok、Qwen、GPT、Ollama、vLLM 等
+- **流式翻译显示**：翻译结果逐字实时显示
+- **模型独立配置**：流式传输、结构化输出(JSON)、上下文历史、禁用思考
 - **麦克风混音**：可选将麦克风输入混合到系统音频一起识别
 - **低延迟 VAD**：32ms 音频块 + Silero VAD，自适应静音检测
 - **透明悬浮窗**：始终置顶、鼠标穿透、可拖拽，14 种配色主题
@@ -114,11 +116,11 @@ main.py                 主入口，管线编排
 ├── asr_sensevoice.py   SenseVoice 后端
 ├── asr_funasr_nano.py  FunASR Nano 后端
 ├── asr_qwen3.py        Qwen3-ASR 后端 (ONNX + GGUF)
-├── translator.py       OpenAI 兼容翻译客户端
+├── translator.py       OpenAI 兼容翻译客户端 (流式/JSON/上下文)
 ├── model_manager.py    模型下载与缓存管理
 ├── subtitle_overlay.py PyQt6 透明悬浮窗
-├── control_panel.py    设置面板 UI
-├── dialogs.py          设置向导、下载对话框
+├── control_panel.py    设置面板 UI (7 个标签页)
+├── dialogs.py          设置向导、下载、模型配置对话框
 └── benchmark.py        翻译基准测试
 ```
 

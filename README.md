@@ -1,4 +1,4 @@
-# LiveTrans
+# LiveTranslate
 
 **English** | [中文](README_zh.md)
 
@@ -12,7 +12,7 @@ Works with any system audio — videos, livestreams, voice chat. No player modif
 
 ## Screenshot
 
-![LiveTrans](screenshot/en.png)
+![LiveTranslate](screenshot/en.png)
 
 ## Video
 
@@ -23,6 +23,8 @@ Works with any system audio — videos, livestreams, voice chat. No player modif
 - **Real-time pipeline**: System audio → VAD → ASR → LLM translation → overlay
 - **Multiple ASR engines**: faster-whisper, SenseVoice, FunASR Nano, Qwen3-ASR (GGUF)
 - **Any OpenAI-compatible API**: DeepSeek, Grok, Qwen, GPT, Ollama, vLLM, etc.
+- **Streaming translation display**: Real-time character-by-character translation output
+- **Per-model settings**: Streaming, structured output (JSON), context history, disable thinking
 - **Microphone mix-in**: Optionally mix microphone input with system audio for ASR
 - **Low-latency VAD**: 32ms chunks + Silero VAD with adaptive silence detection
 - **Transparent overlay**: Always-on-top, click-through, draggable, 14 color themes
@@ -114,11 +116,11 @@ main.py                 Entry point & pipeline
 ├── asr_sensevoice.py   SenseVoice backend
 ├── asr_funasr_nano.py  FunASR Nano backend
 ├── asr_qwen3.py        Qwen3-ASR backend (ONNX + GGUF)
-├── translator.py       OpenAI-compatible client
+├── translator.py       OpenAI-compatible client (streaming, JSON schema, context)
 ├── model_manager.py    Model download & cache
 ├── subtitle_overlay.py PyQt6 overlay
-├── control_panel.py    Settings UI
-├── dialogs.py          Wizard & download dialogs
+├── control_panel.py    Settings UI (7 tabs)
+├── dialogs.py          Wizard, download & model config dialogs
 └── benchmark.py        Translation benchmark
 ```
 
