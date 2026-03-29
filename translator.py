@@ -45,7 +45,9 @@ DEFAULT_PROMPT = (
     "- Output ONLY one single best translation, nothing else.\n"
     "- Never include alternatives, parenthetical options, annotations, or explanations.\n"
     "- Keep proper nouns, names, and brand names untranslated.\n"
-    "- Pursue faithfulness, expressiveness, and elegance."
+    "- Translate repeated expressions concisely, not mechanically word-for-word.\n"
+    "- Keep subtitles fluent and natural; avoid overly literal or stiff phrasing.\n"
+    "- Auto-correct likely ASR errors based on context and common sense."
 )
 
 PROMPT_PRESETS = {
@@ -56,7 +58,8 @@ PROMPT_PRESETS = {
         "- Output ONLY one single best translation, nothing else.\n"
         "- Never include alternatives, parenthetical options, annotations, or explanations.\n"
         "- Keep proper nouns, names, and brand names untranslated.\n"
-        "- Use natural, casual, everyday language. Keep it conversational and concise."
+        "- Use natural, casual, everyday language. Keep it conversational and concise.\n"
+        "- Auto-correct likely ASR errors based on context and common sense."
     ),
     "esports": (
         "You are a real-time subtitle translator for esports/gaming live streams. "
@@ -65,7 +68,8 @@ PROMPT_PRESETS = {
         "- Output ONLY one single best translation, nothing else.\n"
         "- Never include alternatives, parenthetical options, annotations, or explanations.\n"
         "- Keep player names (IGN), team names, game terms, and brand names untranslated.\n"
-        "- Use energetic, concise language appropriate for competitive gaming commentary."
+        "- Use energetic, concise language appropriate for competitive gaming commentary.\n"
+        "- Auto-correct likely ASR errors based on context and common sense."
     ),
     "anime": (
         "You are a real-time subtitle translator for anime, movies, and TV shows. "
@@ -74,7 +78,8 @@ PROMPT_PRESETS = {
         "- Output ONLY one single best translation, nothing else.\n"
         "- Never include alternatives, parenthetical options, annotations, or explanations.\n"
         "- Keep character names, place names, and cultural terms untranslated.\n"
-        "- Use natural, expressive language that matches the tone and emotion of the dialogue."
+        "- Use natural, expressive language that matches the tone and emotion of the dialogue.\n"
+        "- Auto-correct likely ASR errors based on context and common sense."
     ),
 }
 
